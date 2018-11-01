@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  Test:
+    Type: String
+    Default: test
+    Description: Test
+Description: >-
+  AWS CloudFormation sample template that contains a single Lambda function
+  behind an API Gateway
+Resources:
+  StravaSlackLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: !Join 
+          - |+
+
+          - - '''use strict'';'
+            - ''
+            - // Greeter Lambda
+            - 'exports.handler = (event, context, callback) => {'
+            - '  console.log(''Event:'', JSON.stringify(event));'
+            - '  const name = event.name || ''World'';'
+            - '  const response = {greeting: `Hello, ${name}!`};'
+            - '  callback(null, response);'
+            - '};'
+      Description: Strava Slack app
+      FunctionName: StravaSlackLambda
+      Handler: lambda/index.handler
+      Role: !GetAtt 
+        - LambdaExecutionRole
+        - Arn
+      Runtime: nodejs8.10
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+  StravaSlackApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: Strava Slack Api
+      Description: API used for Strava Slack
+      FailOnWarnings: true
+  LambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:invokeFunction'
+      FunctionName: !GetAtt 
+        - StravaSlackLambda
+        - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join 
+        - ''
+        - - 'arn:aws:execute-api:'
+          - !Ref 'AWS::Region'
+          - ':'
+          - !Ref 'AWS::AccountId'
+          - ':'
+          - !Ref StravaSlackApi
+          - /*
+  ApiGatewayCloudWatchLogsRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: ApiGatewayLogsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:DescribeLogGroups'
+                  - 'logs:DescribeLogStreams'
+                  - 'logs:PutLogEvents'
+                  - 'logs:GetLogEvents'
+                  - 'logs:FilterLogEvents'
+                Resource: '*'
+  ApiGatewayAccount:
+    Type: 'AWS::ApiGateway::Account'
+    Properties:
+      CloudWatchRoleArn: !GetAtt
+        - ApiGatewayCloudWatchLogsRole
+        - Arn
+  StravaSlackApiStage:
+    DependsOn:
+      - ApiGatewayAccount
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      MethodSettings:
+        - DataTraceEnabled: true
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          ResourcePath: /*
+      RestApiId: !Ref StravaSlackApi
+      StageName: LATEST
+  ApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn:
+      - StravaSlackRequest
+    Properties:
+      RestApiId: !Ref StravaSlackApi
+      StageName: DummyStage
+  StravaSlackResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref StravaSlackApi
+      ParentId: !GetAtt 
+        - StravaSlackApi
+        - RootResourceId
+      PathPart: '{proxy+}'
+  StravaSlackRequest:
+    DependsOn: LambdaPermission
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: ANY
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Join 
+          - ''
+          - - 'arn:aws:apigateway:'
+            - !Ref 'AWS::Region'
+            - ':lambda:path/2015-03-31/functions/'
+            - !GetAtt 
+              - StravaSlackLambda
+              - Arn
+            - /invocations
+        IntegrationResponses:
+          - StatusCode: 200
+        RequestTemplates:
+          application/json: !Join 
+            - ''
+            - - '{'
+              - '  "name": "$input.params(''name'')"'
+              - '}'
+      RequestParameters:
+        method.request.querystring.name: false
+      ResourceId: !Ref StravaSlackResource
+      RestApiId: !Ref StravaSlackApi
+      MethodResponses:
+        - StatusCode: 200
+Outputs:
+  RootUrl:
+    Description: Root URL of the API gateway
+    Value: !Join 
+      - ''
+      - - 'https://'
+        - !Ref StravaSlackApi
+        - .execute-api.
+        - !Ref 'AWS::Region'
+        - .amazonaws.com
